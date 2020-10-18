@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"golang.org/x/net/context"
+	"gopkg.in/yaml.v2"
 	"io"
 	"io/ioutil"
 	v1 "k8s.io/api/core/v1"
@@ -22,23 +23,26 @@ import (
 	"sync"
 )
 
-func main() {
-	kubeconfig := getKubeConfig()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		forward(kubeconfig, "load-testing-ns", 3000, 8080)
-		defer wg.Done()
-	}()
-	go func() {
-		forward(kubeconfig, "load-testing-ns", 3001, 8080)
-		defer wg.Done()
-	}()
-	wg.Wait()
+type Yaml struct {
+	Ports []string `yaml:ports`
 }
 
-func getKubeConfig() *string {
+func main() {
+	fileName := "example.yml"
+	yamlFile, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		fmt.Printf("Error reading YAML file: %s\n", err)
+		return
+	}
+	println(yamlFile)
+
+	y := Yaml{}
+	err = yaml.Unmarshal([]byte(yamlFile), &y)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("--- t:\n%v\n\n", y)
+
 	var kubeconfig *string
 	if home := homedir.HomeDir(); home != "" {
 		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
@@ -46,7 +50,25 @@ func getKubeConfig() *string {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
 	flag.Parse()
-	return kubeconfig
+
+	var wg sync.WaitGroup
+	wg.Add(len(y.Ports))
+	for _, i := range y.Ports {
+		r := strings.Split(i, ":")
+		go func() {
+			localPort, err := strconv.Atoi(r[0])
+			if err != nil {
+				panic(err)
+			}
+			remotePort, err := strconv.Atoi(r[2])
+			if err != nil {
+				panic(err)
+			}
+			forward(kubeconfig, "load-testing-ns", localPort, remotePort)
+			defer wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
 func forward(kubeconfig *string, namespace string, localPort int, remotePort int) {
