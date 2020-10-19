@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/tools/clientcmd"
@@ -60,18 +61,19 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
+			serviceName := r[1]
 			remotePort, err := strconv.Atoi(r[2])
 			if err != nil {
 				panic(err)
 			}
-			forward(kubeconfig, "load-testing-ns", localPort, remotePort)
+			forward(kubeconfig, "load-testing-ns", serviceName, localPort, remotePort)
 			defer wg.Done()
 		}()
 	}
 	wg.Wait()
 }
 
-func forward(kubeconfig *string, namespace string, localPort int, remotePort int) {
+func forward(kubeconfig *string, namespace string, serviceName string, localPort int, remotePort int) {
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		panic(err)
@@ -88,7 +90,14 @@ func forward(kubeconfig *string, namespace string, localPort int, remotePort int
 		panic(err.Error())
 	}
 	ctx := context.TODO()
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+
+	service, err := clientset.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		panic(err)
+	}
+	set := labels.Set(service.Spec.Selector)
+
+	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: set.AsSelector().String()})
 	if err != nil {
 		panic(err.Error())
 	}
