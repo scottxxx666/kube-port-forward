@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/transport/spdy"
 	"k8s.io/client-go/util/homedir"
+	"k8s.io/kubectl/pkg/util"
 	"net"
 	"net/http"
 	"net/url"
@@ -62,18 +63,18 @@ func main() {
 				panic(err)
 			}
 			serviceName := r[1]
-			remotePort, err := strconv.Atoi(r[2])
+			remotePort, err := strconv.ParseInt(r[2], 10, 32)
 			if err != nil {
 				panic(err)
 			}
-			forward(kubeconfig, "load-testing-ns", serviceName, localPort, remotePort)
+			forward(kubeconfig, "load-testing-ns", serviceName, localPort, int32(remotePort))
 			defer wg.Done()
 		}()
 	}
 	wg.Wait()
 }
 
-func forward(kubeconfig *string, namespace string, serviceName string, localPort int, remotePort int) {
+func forward(kubeconfig *string, namespace string, serviceName string, localPort int, servicePort int32) {
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		panic(err)
@@ -105,6 +106,7 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 		panic("no pods")
 	}
 	podName := pods.Items[0].Name
+	remotePort, _ := util.LookupContainerPortNumberByServicePort(*service, pods.Items[0], servicePort)
 
 	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
 	hostIP := strings.TrimLeft(config.Host, "htps:/")
