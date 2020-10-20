@@ -63,12 +63,13 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			serviceName := r[1]
-			remotePort, err := strconv.ParseInt(r[2], 10, 32)
+			namespace := r[1]
+			serviceName := r[2]
+			remotePort, err := strconv.ParseInt(r[3], 10, 32)
 			if err != nil {
 				panic(err)
 			}
-			forward(kubeconfig, "load-testing-ns", serviceName, localPort, int32(remotePort))
+			forward(kubeconfig, namespace, serviceName, localPort, int32(remotePort))
 			defer wg.Done()
 		}()
 	}
