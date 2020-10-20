@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Yaml struct {
@@ -75,6 +76,17 @@ func main() {
 }
 
 func forward(kubeconfig *string, namespace string, serviceName string, localPort int, servicePort int32) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("rrrrr", r)
+			go func() {
+				println("recover")
+				time.Sleep(1 * time.Second)
+				forward(kubeconfig, namespace, serviceName, localPort, servicePort)
+			}()
+		}
+	}()
+
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
 		panic(err)
@@ -107,6 +119,7 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 	}
 	podName := pods.Items[0].Name
 	remotePort, _ := util.LookupContainerPortNumberByServicePort(*service, pods.Items[0], servicePort)
+	fmt.Println(pods.Items[0].Name)
 
 	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
 	hostIP := strings.TrimLeft(config.Host, "htps:/")
@@ -201,4 +214,10 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("EEEEEEEEEEEEEND")
+
+	go func() {
+		println("done and reconnect")
+		forward(kubeconfig, namespace, serviceName, localPort, servicePort)
+	}()
 }
