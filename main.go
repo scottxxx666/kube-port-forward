@@ -185,8 +185,14 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 			panic(err)
 		}
 
+		fmt.Println("Remote done")
+		go func() {
+			println("done and reconnect")
+			forward(kubeconfig, namespace, serviceName, localPort, servicePort)
+		}()
+
 		// inform the select below that the remote copy is done
-		close(remoteDone)
+		// close(remoteDone)
 	}()
 
 	go func() {
@@ -206,9 +212,7 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 	// wait for either a local->remote error or for copying from remote->local to finish
 	select {
 	case <-remoteDone:
-		println("remoteDone")
 	case <-localError:
-		println("localErrpor")
 	}
 
 	err = <-errorChan
@@ -216,9 +220,4 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 		panic(err)
 	}
 	fmt.Println("EEEEEEEEEEEEEND")
-
-	go func() {
-		println("done and reconnect")
-		forward(kubeconfig, namespace, serviceName, localPort, servicePort)
-	}()
 }
