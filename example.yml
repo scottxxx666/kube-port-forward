@@ -1,0 +1,3 @@
+#  - <local port>:<namespace>:<service name>:<service port>
+ports:
+  - 3000:default:service-name:80
