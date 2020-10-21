@@ -57,8 +57,10 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(len(y.Ports))
 	for _, i := range y.Ports {
-		r := strings.Split(i, ":")
-		go func() {
+		go func(wg *sync.WaitGroup, i string) {
+			defer wg.Done()
+
+			r := strings.Split(i, ":")
 			localPort, err := strconv.Atoi(r[0])
 			if err != nil {
 				panic(err)
@@ -69,24 +71,34 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			forward(kubeconfig, namespace, serviceName, localPort, int32(remotePort))
-			defer wg.Done()
-		}()
+			forward(wg, kubeconfig, namespace, serviceName, localPort, int32(remotePort))
+		}(&wg, i)
 	}
 	wg.Wait()
+	fmt.Println("***ALL END***")
 }
 
-func forward(kubeconfig *string, namespace string, serviceName string, localPort int, servicePort int32) {
-	defer func() {
+func forward(wg *sync.WaitGroup, kubeconfig *string, namespace string, serviceName string, localPort int, servicePort int32) {
+	defer func(wg *sync.WaitGroup) {
 		if r := recover(); r != nil {
-			fmt.Println("rrrrr", r)
-			go func() {
-				println("recover")
+			fmt.Println("Recover from: ", r)
+			wg.Add(1)
+			go func(wg *sync.WaitGroup) {
+				defer wg.Done()
 				time.Sleep(1 * time.Second)
-				forward(kubeconfig, namespace, serviceName, localPort, servicePort)
-			}()
+				forward(wg, kubeconfig, namespace, serviceName, localPort, servicePort)
+			}(wg)
+			return
 		}
-	}()
+
+		println("Reconnect")
+		wg.Add(1)
+		go func(wg *sync.WaitGroup) {
+			defer wg.Done()
+			time.Sleep(1 * time.Second)
+			forward(wg, kubeconfig, namespace, serviceName, localPort, servicePort)
+		}(wg)
+	}(wg)
 
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
 	if err != nil {
@@ -95,7 +107,6 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 
 	roundTripper, upgrader, err := spdy.RoundTripperFor(config)
 	if err != nil {
-		println("eb1")
 		panic(err)
 	}
 
@@ -130,7 +141,6 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 	const PortForwardProtocolV1Name = "portforward.k8s.io"
 	connection, _, err := dialer.Dial(PortForwardProtocolV1Name)
 	if err != nil {
-		println("dial err")
 		panic(err)
 	}
 
@@ -148,7 +158,6 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 	if err != nil {
 		println("error creating error stream for port %d -> %d: %v")
 		panic(err)
-		return
 	}
 	// we're not writing to this stream
 	errorStream.Close()
@@ -181,18 +190,13 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 	go func() {
 		// if _, err := io.Copy(conn, dataStream); err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
 		if _, err := io.Copy(conn, dataStream); err != nil {
-			// runtime.HandleError(fmt.Errorf("error copying from remote stream to local connection: %v", err))
+			fmt.Printf("error copying from remote stream to local connection: %v", err)
 			panic(err)
 		}
 
-		fmt.Println("Remote done")
-		go func() {
-			println("done and reconnect")
-			forward(kubeconfig, namespace, serviceName, localPort, servicePort)
-		}()
-
+		fmt.Println(podName + " Remote done")
 		// inform the select below that the remote copy is done
-		// close(remoteDone)
+		close(remoteDone)
 	}()
 
 	go func() {
@@ -202,9 +206,9 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 		// Copy from the local port to the remote side.
 		// if _, err := io.Copy(dataStream, conn); err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
 		if _, err := io.Copy(dataStream, conn); err != nil {
-			// runtime.HandleError(fmt.Errorf("error copying from local connection to remote stream: %v", err))
-			panic(err)
+			fmt.Printf("error copying from local connection to remote stream: %v", err)
 			// break out of the select below without waiting for the other copy to finish
+			fmt.Println(podName + " Local error")
 			close(localError)
 		}
 	}()
@@ -219,5 +223,5 @@ func forward(kubeconfig *string, namespace string, serviceName string, localPort
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("EEEEEEEEEEEEEND")
+	fmt.Println(podName + " END")
 }
