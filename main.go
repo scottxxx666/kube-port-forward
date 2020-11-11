@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 type Yaml struct {
@@ -55,52 +54,57 @@ func main() {
 	flag.Parse()
 
 	var wg sync.WaitGroup
-	wg.Add(len(y.Ports))
+	num := len(y.Ports)
+	inputCh := make(chan Forwarder, num)
+	wg.Add(num)
 	for _, i := range y.Ports {
-		go func(wg *sync.WaitGroup, i string) {
-			defer wg.Done()
-
-			r := strings.Split(i, ":")
-			localPort, err := strconv.Atoi(r[0])
-			if err != nil {
-				panic(err)
-			}
-			namespace := r[1]
-			serviceName := r[2]
-			remotePort, err := strconv.ParseInt(r[3], 10, 32)
-			if err != nil {
-				panic(err)
-			}
-			forward(wg, kubeconfig, namespace, serviceName, localPort, int32(remotePort))
-		}(&wg, i)
+		r := strings.Split(i, ":")
+		localPort, err := strconv.Atoi(r[0])
+		if err != nil {
+			panic(err)
+		}
+		namespace := r[1]
+		serviceName := r[2]
+		remotePort, err := strconv.ParseInt(r[3], 10, 32)
+		if err != nil {
+			panic(err)
+		}
+		inputCh <- Forwarder{
+			Namespace:   namespace,
+			ServiceName: serviceName,
+			LocalPort:   localPort,
+			ServicePort: int32(remotePort),
+		}
 	}
+
+	for input := range inputCh {
+		forward(&wg, *kubeconfig, input, inputCh)
+	}
+
 	wg.Wait()
 	fmt.Println("***ALL END***")
 }
 
-func forward(wg *sync.WaitGroup, kubeconfig *string, namespace string, serviceName string, localPort int, servicePort int32) {
+type Forwarder struct {
+	Namespace   string
+	ServiceName string
+	LocalPort   int
+	ServicePort int32
+}
+
+func forward(wg *sync.WaitGroup, kubeconfig string, f Forwarder, inputCh chan Forwarder) {
 	defer func(wg *sync.WaitGroup) {
 		if r := recover(); r != nil {
 			fmt.Println("Recover from: ", r)
-			wg.Add(1)
-			go func(wg *sync.WaitGroup) {
-				defer wg.Done()
-				time.Sleep(1 * time.Second)
-				forward(wg, kubeconfig, namespace, serviceName, localPort, servicePort)
-			}(wg)
+			inputCh <- f
 			return
 		}
 
 		println("Reconnect")
-		wg.Add(1)
-		go func(wg *sync.WaitGroup) {
-			defer wg.Done()
-			time.Sleep(1 * time.Second)
-			forward(wg, kubeconfig, namespace, serviceName, localPort, servicePort)
-		}(wg)
+		inputCh <- f
 	}(wg)
 
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		panic(err)
 	}
@@ -116,13 +120,13 @@ func forward(wg *sync.WaitGroup, kubeconfig *string, namespace string, serviceNa
 	}
 	ctx := context.TODO()
 
-	service, err := clientset.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	service, err := clientset.CoreV1().Services(f.Namespace).Get(ctx, f.ServiceName, metav1.GetOptions{})
 	if err != nil {
 		panic(err)
 	}
 	set := labels.Set(service.Spec.Selector)
 
-	pods, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: set.AsSelector().String()})
+	pods, err := clientset.CoreV1().Pods(f.Namespace).List(ctx, metav1.ListOptions{LabelSelector: set.AsSelector().String()})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -130,10 +134,10 @@ func forward(wg *sync.WaitGroup, kubeconfig *string, namespace string, serviceNa
 		panic("no pods")
 	}
 	podName := pods.Items[0].Name
-	remotePort, _ := util.LookupContainerPortNumberByServicePort(*service, pods.Items[0], servicePort)
+	remotePort, _ := util.LookupContainerPortNumberByServicePort(*service, pods.Items[0], f.ServicePort)
 	fmt.Println(pods.Items[0].Name)
 
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", f.Namespace, podName)
 	hostIP := strings.TrimLeft(config.Host, "htps:/")
 	serverURL := url.URL{Scheme: "https", Path: path, Host: hostIP}
 
@@ -144,11 +148,11 @@ func forward(wg *sync.WaitGroup, kubeconfig *string, namespace string, serviceNa
 		panic(err)
 	}
 
-	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort)))
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)))
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Forwarding from %s -> %d\n", net.JoinHostPort("127.0.0.1", strconv.Itoa(localPort)), remotePort)
+	fmt.Printf("Forwarding from %s -> %d\n", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)), remotePort)
 
 	headers := http.Header{}
 	headers.Set(v1.StreamType, v1.StreamTypeError)
@@ -167,9 +171,9 @@ func forward(wg *sync.WaitGroup, kubeconfig *string, namespace string, serviceNa
 		message, err := ioutil.ReadAll(errorStream)
 		switch {
 		case err != nil:
-			errorChan <- fmt.Errorf("error reading from error stream for port %d -> %d: %v", localPort, remotePort, err)
+			errorChan <- fmt.Errorf("error reading from error stream for port %d -> %d: %v", f.LocalPort, remotePort, err)
 		case len(message) > 0:
-			errorChan <- fmt.Errorf("an error occurred forwarding %d -> %d: %v", localPort, remotePort, string(message))
+			errorChan <- fmt.Errorf("an error occurred forwarding %d -> %d: %v", f.LocalPort, remotePort, string(message))
 		}
 		close(errorChan)
 	}()
