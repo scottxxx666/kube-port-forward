@@ -75,10 +75,12 @@ func main() {
 			LocalPort:   localPort,
 			ServicePort: int32(remotePort),
 		}
-	}
 
-	for input := range inputCh {
-		forward(&wg, *kubeconfig, input, inputCh)
+		go func() {
+			for input := range inputCh {
+				forward(&wg, *kubeconfig, input, inputCh)
+			}
+		}()
 	}
 
 	wg.Wait()
@@ -147,6 +149,7 @@ func forward(wg *sync.WaitGroup, kubeconfig string, f Forwarder, inputCh chan Fo
 	if err != nil {
 		panic(err)
 	}
+	defer connection.Close()
 
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)))
 	if err != nil {
@@ -185,9 +188,12 @@ func forward(wg *sync.WaitGroup, kubeconfig string, f Forwarder, inputCh chan Fo
 	}
 	localError := make(chan struct{})
 	remoteDone := make(chan struct{})
+	defer close(localError)
+	defer close(remoteDone)
 
 	// Copy from the remote side to the local port.
 	conn, err := listener.Accept()
+	defer conn.Close()
 	if err != nil {
 		panic(err)
 	}
@@ -198,7 +204,7 @@ func forward(wg *sync.WaitGroup, kubeconfig string, f Forwarder, inputCh chan Fo
 			panic(err)
 		}
 
-		fmt.Println(podName + " Remote done")
+		fmt.Println(podName, "Close remote to local")
 		// inform the select below that the remote copy is done
 		close(remoteDone)
 	}()
@@ -215,6 +221,7 @@ func forward(wg *sync.WaitGroup, kubeconfig string, f Forwarder, inputCh chan Fo
 			fmt.Println(podName + " Local error")
 			close(localError)
 		}
+		fmt.Println(podName, "Close local to remote")
 	}()
 
 	// wait for either a local->remote error or for copying from remote->local to finish
