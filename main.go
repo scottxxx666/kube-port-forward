@@ -20,16 +20,36 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Yaml struct {
 	Ports []string `yaml:ports`
 }
 
+func bToMb(b uint64) uint64 {
+	return b / 1024 / 1024
+}
+
 func main() {
+	go func() {
+		for true {
+			fmt.Println("Goroutine num: ", runtime.NumGoroutine())
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
+			fmt.Printf("TotalAlloc = %v MiB", bToMb(m.TotalAlloc))
+			fmt.Printf("Sys = %v MiB", bToMb(m.Sys))
+			fmt.Printf("NumGC = %v\n", m.NumGC)
+
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
 	fileName := "example.yml"
 	yamlFile, err := ioutil.ReadFile(fileName)
 	if err != nil {
