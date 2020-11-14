@@ -188,8 +188,6 @@ func forward(wg *sync.WaitGroup, kubeconfig string, f Forwarder, inputCh chan Fo
 	}
 	localError := make(chan struct{})
 	remoteDone := make(chan struct{})
-	defer close(localError)
-	defer close(remoteDone)
 
 	// Copy from the remote side to the local port.
 	conn, err := listener.Accept()
