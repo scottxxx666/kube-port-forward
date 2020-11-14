@@ -98,7 +98,8 @@ func main() {
 
 		go func() {
 			for input := range inputCh {
-				forward(&wg, *kubeconfig, input, inputCh)
+				forward(*kubeconfig, input)
+				inputCh <- input
 			}
 		}()
 	}
@@ -114,17 +115,14 @@ type Forwarder struct {
 	ServicePort int32
 }
 
-func forward(wg *sync.WaitGroup, kubeconfig string, f Forwarder, inputCh chan Forwarder) {
-	defer func(wg *sync.WaitGroup) {
+func forward(kubeconfig string, f Forwarder) {
+	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println("Recover from: ", r)
-			inputCh <- f
 			return
 		}
-
 		println("Reconnect")
-		inputCh <- f
-	}(wg)
+	}()
 
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
