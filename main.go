@@ -50,7 +50,14 @@ func main() {
 		}
 	}()
 
-	fileName := "example.yml"
+	var fileName string
+	flag.StringVar(&fileName, "f", "", "YAML file to parse.")
+	flag.Parse()
+
+	if fileName == "" {
+		fmt.Println("Please provide yaml file by using -f option")
+		return
+	}
 	yamlFile, err := ioutil.ReadFile(fileName)
 	if err != nil {
 		fmt.Printf("Error reading YAML file: %s\n", err)
