@@ -41,12 +41,12 @@ func main() {
 			fmt.Println("Goroutine num: ", runtime.NumGoroutine())
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-			fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
-			fmt.Printf("TotalAlloc = %v MiB", bToMb(m.TotalAlloc))
-			fmt.Printf("Sys = %v MiB", bToMb(m.Sys))
-			fmt.Printf("NumGC = %v\n", m.NumGC)
+			fmt.Printf("Alloc = %v MiB  ", bToMb(m.Alloc))
+			fmt.Printf("TotalAlloc = %v MiB  ", bToMb(m.TotalAlloc))
+			fmt.Printf("Sys = %v MiB  ", bToMb(m.Sys))
+			fmt.Printf("NumGC = %v \n", m.NumGC)
 
-			time.Sleep(5 * time.Second)
+			time.Sleep(1 * time.Minute)
 		}
 	}()
 
@@ -63,14 +63,12 @@ func main() {
 		fmt.Printf("Error reading YAML file: %s\n", err)
 		return
 	}
-	println(yamlFile)
 
 	y := Yaml{}
-	err = yaml.Unmarshal([]byte(yamlFile), &y)
+	err = yaml.Unmarshal(yamlFile, &y)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("--- t:\n%v\n\n", y)
 
 	var kubeconfig *string
 	if home := homedir.HomeDir(); home != "" {

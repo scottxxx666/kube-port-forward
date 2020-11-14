@@ -1,4 +1,4 @@
-module github.com/scottxxx666/kube-port-forward
+module github.com/scottxxx666/kube-porward
 
 go 1.14
 
