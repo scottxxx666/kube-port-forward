@@ -10,6 +10,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/tools/clientcmd"
@@ -166,28 +167,52 @@ func forward(kubeconfig string, f Forwarder) {
 	hostIP := strings.TrimLeft(config.Host, "htps:/")
 	serverURL := url.URL{Scheme: "https", Path: path, Host: hostIP}
 
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: roundTripper}, http.MethodPost, &serverURL)
-	const PortForwardProtocolV1Name = "portforward.k8s.io"
-	connection, _, err := dialer.Dial(PortForwardProtocolV1Name)
-	if err != nil {
-		panic(err)
-	}
-	defer connection.Close()
-
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)))
 	if err != nil {
 		panic(err)
 	}
 	fmt.Printf("Forwarding from %s -> %d\n", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)), remotePort)
 
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			// TODO consider using something like https://github.com/hydrogen18/stoppableListener?
+			// if !strings.Contains(strings.ToLower(err.Error()), "use of closed network connection") {
+			fmt.Errorf("error accepting connection on port %d: %v", f.LocalPort, err)
+			return
+		}
+
+		dialer := spdy.NewDialer(upgrader, &http.Client{Transport: roundTripper}, http.MethodPost, &serverURL)
+		const PortForwardProtocolV1Name = "portforward.k8s.io"
+		streamConn, _, err := dialer.Dial(PortForwardProtocolV1Name)
+		if err != nil {
+			logError(podName, "create stream connection failed", err)
+			panic("create stream connection failed")
+			return
+		}
+
+		go handleConnection(streamConn, remotePort, f, podName, conn)
+	}
+}
+
+func logError(podName string, msg string, err error) {
+	fmt.Println(podName, msg, err)
+}
+
+func handleConnection(streamConn httpstream.Connection, remotePort int32, f Forwarder, podName string, conn net.Conn) {
+	defer conn.Close()
+	defer streamConn.Close()
+
+	fmt.Printf("Handling connection for %d\n", f.LocalPort)
+
 	headers := http.Header{}
 	headers.Set(v1.StreamType, v1.StreamTypeError)
 	headers.Set(v1.PortHeader, fmt.Sprintf("%d", remotePort))
 	headers.Set(v1.PortForwardRequestIDHeader, strconv.Itoa(1234))
-	errorStream, err := connection.CreateStream(headers)
+	errorStream, err := streamConn.CreateStream(headers)
 	if err != nil {
-		println("error creating error stream for port %d -> %d: %v")
-		panic(err)
+		logError(podName, "error creating error stream for port %d -> %d: %v", err)
+		return
 	}
 	// we're not writing to this stream
 	errorStream.Close()
@@ -205,24 +230,20 @@ func forward(kubeconfig string, f Forwarder) {
 	}()
 
 	headers.Set(v1.StreamType, v1.StreamTypeData)
-	dataStream, err := connection.CreateStream(headers)
+	dataStream, err := streamConn.CreateStream(headers)
 	if err != nil {
-		panic(err)
+		logError(podName, "create data stream fail", err)
+		return
 	}
 	localError := make(chan struct{})
 	remoteDone := make(chan struct{})
 
 	// Copy from the remote side to the local port.
-	conn, err := listener.Accept()
-	defer conn.Close()
-	if err != nil {
-		panic(err)
-	}
 	go func() {
-		// if _, err := io.Copy(conn, dataStream); err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+		// if _, err := io.Copy(conn, dataStream); err != nil && !strings.Contains(err.Error(), "use of closed network streamConn") {
 		if _, err := io.Copy(conn, dataStream); err != nil {
-			fmt.Printf("error copying from remote stream to local connection: %v", err)
-			panic(err)
+			logError(podName, "error copying from remote stream to local streamConn: %v", err)
+			return
 		}
 
 		fmt.Println(podName, "Close remote to local")
@@ -235,9 +256,9 @@ func forward(kubeconfig string, f Forwarder) {
 		defer dataStream.Close()
 
 		// Copy from the local port to the remote side.
-		// if _, err := io.Copy(dataStream, conn); err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+		// if _, err := io.Copy(dataStream, conn); err != nil && !strings.Contains(err.Error(), "use of closed network streamConn") {
 		if _, err := io.Copy(dataStream, conn); err != nil {
-			fmt.Printf("error copying from local connection to remote stream: %v", err)
+			fmt.Printf("error copying from local streamConn to remote stream: %v", err)
 			// break out of the select below without waiting for the other copy to finish
 			fmt.Println(podName + " Local error")
 			close(localError)
@@ -253,7 +274,7 @@ func forward(kubeconfig string, f Forwarder) {
 
 	err = <-errorChan
 	if err != nil {
-		panic(err)
+		logError(podName, "error channel: ", err)
 	}
 	fmt.Println(podName + " END")
 }
