@@ -168,6 +168,7 @@ func forward(kubeconfig string, f Forwarder) {
 	serverURL := url.URL{Scheme: "https", Path: path, Host: hostIP}
 
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)))
+	defer listener.Close()
 	if err != nil {
 		panic(err)
 	}
