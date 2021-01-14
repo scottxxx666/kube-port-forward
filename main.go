@@ -187,6 +187,7 @@ func forward(kubeconfig string, f Forwarder) {
 		const PortForwardProtocolV1Name = "portforward.k8s.io"
 		streamConn, _, err := dialer.Dial(PortForwardProtocolV1Name)
 		if err != nil {
+			conn.Close()
 			logError(podName, "create stream connection failed", err)
 			panic("create stream connection failed")
 			return
