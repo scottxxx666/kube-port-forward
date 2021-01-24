@@ -16,7 +16,7 @@ func monitor() {
 		fmt.Printf("Sys = %v MiB  ", bToMb(m.Sys))
 		fmt.Printf("NumGC = %v \n", m.NumGC)
 
-		time.Sleep(1 * time.Minute)
+		time.Sleep(10 * time.Second)
 	}
 }
 
