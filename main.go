@@ -104,7 +104,7 @@ func main() {
 
 		go func() {
 			for input := range inputCh {
-				forward(*kubeconfig, input)
+				input.forward(*kubeconfig)
 				inputCh <- input
 			}
 		}()
@@ -121,7 +121,7 @@ type Forwarder struct {
 	ServicePort int32
 }
 
-func forward(kubeconfig string, f Forwarder) {
+func (f Forwarder) forward(kubeconfig string) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println("Recover from: ", r)
@@ -188,20 +188,20 @@ func forward(kubeconfig string, f Forwarder) {
 		streamConn, _, err := dialer.Dial(PortForwardProtocolV1Name)
 		if err != nil {
 			conn.Close()
-			logError(podName, "create stream connection failed", err)
+			f.logError(podName, "create stream connection failed", err)
 			panic("create stream connection failed")
 			return
 		}
 
-		go handleConnection(streamConn, remotePort, f, podName, conn)
+		go f.handleConnection(streamConn, remotePort, podName, conn)
 	}
 }
 
-func logError(podName string, msg string, err error) {
+func (f Forwarder) logError(podName string, msg string, err error) {
 	fmt.Println(podName, msg, err)
 }
 
-func handleConnection(streamConn httpstream.Connection, remotePort int32, f Forwarder, podName string, conn net.Conn) {
+func (f Forwarder) handleConnection(streamConn httpstream.Connection, remotePort int32, podName string, conn net.Conn) {
 	defer conn.Close()
 	defer streamConn.Close()
 
@@ -213,7 +213,7 @@ func handleConnection(streamConn httpstream.Connection, remotePort int32, f Forw
 	headers.Set(v1.PortForwardRequestIDHeader, strconv.Itoa(1234))
 	errorStream, err := streamConn.CreateStream(headers)
 	if err != nil {
-		logError(podName, "error creating error stream for port %d -> %d: %v", err)
+		f.logError(podName, "error creating error stream for port %d -> %d: %v", err)
 		return
 	}
 	// we're not writing to this stream
@@ -234,7 +234,7 @@ func handleConnection(streamConn httpstream.Connection, remotePort int32, f Forw
 	headers.Set(v1.StreamType, v1.StreamTypeData)
 	dataStream, err := streamConn.CreateStream(headers)
 	if err != nil {
-		logError(podName, "create data stream fail", err)
+		f.logError(podName, "create data stream fail", err)
 		return
 	}
 	localError := make(chan struct{})
@@ -244,7 +244,7 @@ func handleConnection(streamConn httpstream.Connection, remotePort int32, f Forw
 	go func() {
 		// if _, err := io.Copy(conn, dataStream); err != nil && !strings.Contains(err.Error(), "use of closed network streamConn") {
 		if _, err := io.Copy(conn, dataStream); err != nil {
-			logError(podName, "error copying from remote stream to local streamConn: %v", err)
+			f.logError(podName, "error copying from remote stream to local streamConn: %v", err)
 			return
 		}
 
@@ -276,7 +276,7 @@ func handleConnection(streamConn httpstream.Connection, remotePort int32, f Forw
 
 	err = <-errorChan
 	if err != nil {
-		logError(podName, "error channel: ", err)
+		f.logError(podName, "error channel: ", err)
 	}
 	fmt.Println(podName + " END")
 }
