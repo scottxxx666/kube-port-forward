@@ -24,23 +24,27 @@ func bToMb(b uint64) uint64 {
 }
 
 func main() {
-	go func() {
-		for true {
-			fmt.Println("Goroutine num: ", runtime.NumGoroutine())
-			var m runtime.MemStats
-			runtime.ReadMemStats(&m)
-			fmt.Printf("Alloc = %v MiB  ", bToMb(m.Alloc))
-			fmt.Printf("TotalAlloc = %v MiB  ", bToMb(m.TotalAlloc))
-			fmt.Printf("Sys = %v MiB  ", bToMb(m.Sys))
-			fmt.Printf("NumGC = %v \n", m.NumGC)
-
-			time.Sleep(1 * time.Minute)
-		}
-	}()
-
 	var fileName string
 	flag.StringVar(&fileName, "f", "", "YAML file to parse.")
+	var shouldMonitor bool
+	flag.BoolVar(&shouldMonitor, "m", false, "Should monitor memory and goroutine or not.")
 	flag.Parse()
+
+	if shouldMonitor {
+		go func() {
+			for true {
+				fmt.Println("Goroutine num: ", runtime.NumGoroutine())
+				var m runtime.MemStats
+				runtime.ReadMemStats(&m)
+				fmt.Printf("Alloc = %v MiB  ", bToMb(m.Alloc))
+				fmt.Printf("TotalAlloc = %v MiB  ", bToMb(m.TotalAlloc))
+				fmt.Printf("Sys = %v MiB  ", bToMb(m.Sys))
+				fmt.Printf("NumGC = %v \n", m.NumGC)
+
+				time.Sleep(1 * time.Minute)
+			}
+		}()
+	}
 
 	if fileName == "" {
 		fmt.Println("Please provide yaml file by using -f option")
