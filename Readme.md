@@ -1,6 +1,8 @@
 # kube-porward
 
-Auto reconnect Kubernetes port forward
+Kube-porward is a tool for port forwarding to Kubernetes services.
+- Auto reconnect
+- Port forward to multiple services at the same time
 
 ### Usage
 #### Build from source
