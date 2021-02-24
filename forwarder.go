@@ -1,8 +1,8 @@
 package main
 
 import (
-	"errors"
 	"fmt"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"io"
 	"io/ioutil"
@@ -31,40 +31,40 @@ type Forwarder struct {
 	ServicePort int32
 }
 
-func (f Forwarder) forward(kubeconfig string) {
+func (f Forwarder) forward(kubeconfig string) error {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Println("Recover from: ", r)
 			return
 		}
-		println("Reconnect")
+		println("end forward")
 	}()
 
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	roundTripper, upgrader, err := spdy.RoundTripperFor(config)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		return err
 	}
 	ctx := context.TODO()
 
 	service, err := clientset.CoreV1().Services(f.Namespace).Get(ctx, f.ServiceName, metav1.GetOptions{})
 	if err != nil {
-		panic(err)
+		return err
 	}
 	set := labels.Set(service.Spec.Selector)
 
 	pod, err := f.getFirstPod(clientset, ctx, set)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	podName := (*pod).Name
@@ -79,7 +79,7 @@ func (f Forwarder) forward(kubeconfig string) {
 	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)))
 	defer listener.Close()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	fmt.Printf("Forwarding from %s -> %d\n", net.JoinHostPort("127.0.0.1", strconv.Itoa(f.LocalPort)), remotePort)
 
@@ -89,7 +89,7 @@ func (f Forwarder) forward(kubeconfig string) {
 			// TODO consider using something like https://github.com/hydrogen18/stoppableListener?
 			// if !strings.Contains(strings.ToLower(err.Error()), "use of closed network connection") {
 			fmt.Errorf("error accepting connection on port %d: %v", f.LocalPort, err)
-			return
+			return nil
 		}
 
 		dialer := spdy.NewDialer(upgrader, &http.Client{Transport: roundTripper}, http.MethodPost, &serverURL)
@@ -97,9 +97,7 @@ func (f Forwarder) forward(kubeconfig string) {
 		streamConn, _, err := dialer.Dial(PortForwardProtocolV1Name)
 		if err != nil {
 			conn.Close()
-			f.logError(podName, "create stream connection failed", err)
-			panic("create stream connection failed")
-			return
+			return errors.Wrap(err, "create stream connection failed")
 		}
 
 		go f.handleConnection(streamConn, remotePort, podName, conn)
