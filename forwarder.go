@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"golang.org/x/net/context"
 	"io"
@@ -61,22 +62,9 @@ func (f Forwarder) forward(kubeconfig string) {
 	}
 	set := labels.Set(service.Spec.Selector)
 
-	wpod, err := clientset.CoreV1().Pods(f.Namespace).Watch(ctx, metav1.ListOptions{LabelSelector: set.AsSelector().String()})
+	pod, err := f.getFirstPod(clientset, ctx, set)
 	if err != nil {
 		panic(err)
-	}
-	defer wpod.Stop()
-	condition := func(event watch.Event) (bool, error) {
-		return event.Type == watch.Added || event.Type == watch.Modified, nil
-	}
-
-	event, err := watchtools.UntilWithoutRetry(ctx, wpod, condition)
-	if err != nil {
-		panic(err)
-	}
-	pod, ok := event.Object.(*corev1.Pod)
-	if !ok {
-		fmt.Errorf("%#v is not a pod event", event)
 	}
 
 	podName := (*pod).Name
@@ -116,6 +104,28 @@ func (f Forwarder) forward(kubeconfig string) {
 
 		go f.handleConnection(streamConn, remotePort, podName, conn)
 	}
+}
+
+func (f *Forwarder) getFirstPod(clientset *kubernetes.Clientset, ctx context.Context, set labels.Set) (*v1.Pod, error) {
+	wpod, err := clientset.CoreV1().Pods(f.Namespace).Watch(ctx, metav1.ListOptions{LabelSelector: set.AsSelector().String()})
+	if err != nil {
+		return nil, err
+	}
+	defer wpod.Stop()
+
+	condition := func(event watch.Event) (bool, error) {
+		return event.Type == watch.Added || event.Type == watch.Modified, nil
+	}
+
+	event, err := watchtools.UntilWithoutRetry(ctx, wpod, condition)
+	if err != nil {
+		return nil, err
+	}
+	pod, ok := event.Object.(*corev1.Pod)
+	if !ok {
+		return nil, errors.New(fmt.Sprintf("%#v is not a pod event", event))
+	}
+	return pod, nil
 }
 
 func (f Forwarder) logError(podName string, msg string, err error) {
