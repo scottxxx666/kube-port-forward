@@ -5,12 +5,15 @@ import (
 	"golang.org/x/net/context"
 	"io"
 	"io/ioutil"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/httpstream"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	watchtools "k8s.io/client-go/tools/watch"
 	"k8s.io/client-go/transport/spdy"
 	"k8s.io/kubectl/pkg/util"
 	"net"
@@ -58,16 +61,28 @@ func (f Forwarder) forward(kubeconfig string) {
 	}
 	set := labels.Set(service.Spec.Selector)
 
-	pods, err := clientset.CoreV1().Pods(f.Namespace).List(ctx, metav1.ListOptions{LabelSelector: set.AsSelector().String()})
+	wpod, err := clientset.CoreV1().Pods(f.Namespace).Watch(ctx, metav1.ListOptions{LabelSelector: set.AsSelector().String()})
 	if err != nil {
-		panic(err.Error())
+		panic(err)
 	}
-	if len(pods.Items) == 0 {
-		panic("no pods")
+	defer wpod.Stop()
+	condition := func(event watch.Event) (bool, error) {
+		return event.Type == watch.Added || event.Type == watch.Modified, nil
 	}
-	podName := pods.Items[0].Name
-	remotePort, _ := util.LookupContainerPortNumberByServicePort(*service, pods.Items[0], f.ServicePort)
-	fmt.Println(pods.Items[0].Name)
+
+	event, err := watchtools.UntilWithoutRetry(ctx, wpod, condition)
+	if err != nil {
+		panic(err)
+	}
+	pod, ok := event.Object.(*corev1.Pod)
+	if !ok {
+		fmt.Errorf("%#v is not a pod event", event)
+	}
+
+	podName := (*pod).Name
+	fmt.Println("pod name:", podName)
+
+	remotePort, _ := util.LookupContainerPortNumberByServicePort(*service, *pod, f.ServicePort)
 
 	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", f.Namespace, podName)
 	hostIP := strings.TrimLeft(config.Host, "htps:/")
